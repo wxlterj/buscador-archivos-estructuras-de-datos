@@ -91,6 +91,9 @@ class UI:
         
 
         # ---- SCROLL AREA ----
+        # Título de la sección donde se muestran los documentos/resultados
+        ttk.Label(self.root, text="Archivos", style="Title.TLabel").pack(fill="x", padx=20, anchor="w")
+
         container = ttk.Frame(self.root)
         container.pack(fill="both", expand=True, padx=20, pady=10)
 
