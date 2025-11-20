@@ -26,8 +26,8 @@ class UI:
         # header
         self.header = ttk.Frame(self.root, padding=20)
         self.header.pack(fill="x")
-        ttk.Label(self.header, text="Buscar documentos", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self.header, text="Buscar documentos por título o contenido", style="Sub.TLabel").pack(anchor="w")
+        ttk.Label(self.header, text="Buscar archivo", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(self.header, text="Buscar archivo por título o contenido", style="Sub.TLabel").pack(anchor="w")
         self.upload_button = tk.Button(self.header, text="⬆️Subir archivo", bg="#0A84FF", fg="white", font=("Segoe UI", 10, "bold"), relief="flat", padx=10, pady=5)
         self.upload_button.bind("<Button-1>", self.on_upload_click)
         self.upload_button.pack(anchor="e")
@@ -373,6 +373,7 @@ class UI:
         for ui_file in list_to_iterate:
             card = ttk.Frame(self.cards_frame, padding=15, style="Card.TFrame")
             card.grid(row=row, column=col, padx=10, pady=10, sticky="n")
+            card.bind("<Button-1>", lambda e, path=ui_file.path: os.startfile(path))
 
             # --- Header con ícono y nombre ---
             header = ttk.Frame(card)
