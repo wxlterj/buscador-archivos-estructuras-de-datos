@@ -1,6 +1,8 @@
 import os
+import sys
+import subprocess
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 from index import indexar_archivo, trie_titulos,  trie_contenidos, normalizar, matrizDocumentos, buscar_palabra
 from model import UIFile
 
@@ -13,22 +15,50 @@ class UI:
         self.files = []
         self.results = []
 
-        # ---- ESTILOS ----
+        # ---- ESTILOS (paleta minimalista) ----
+        # Paleta: fondo claro neutro, acento azul suave, textos en gris oscuro
+        bg_main = "#F5F7FA"       # fondo principal
+        accent = "#2B6AF7"        # acento (botones, enlaces)
+        text_primary = "#0F172A"   # texto principal
+        text_muted = "#6B7280"     # texto secundario / muted
+        card_bg = "#FFFFFF"        # fondo tarjetas
+        card_border = "#E6EEF8"    # borde sutil
+
+        # guardar en self para usarlos fuera de __init__
+        self.bg_main = bg_main
+        self.accent = accent
+        self.text_primary = text_primary
+        self.text_muted = text_muted
+        self.card_bg = card_bg
+        self.card_border = card_border
+
         self.style = ttk.Style()
-        self.style.configure("TFrame", background="#F5F5F5")
-        self.style.configure("TLabel", background="#F5F5F5")
-        self.style.configure("Title.TLabel", font=("Segoe UI", 20, "bold"), background="#F5F5F5")
-        self.style.configure("Sub.TLabel", font=("Segoe UI", 11), foreground="#555", background="#F5F5F5")
-        self.style.configure("Search.TButton", font=("Segoe UI", 11, "bold"))
-        self.style.configure("Card.TFrame", relief="raised", borderwidth=1)
-        self.style.configure("Category.TLabel", foreground="#0A84FF", font=("Segoe UI", 10, "bold"))
+        # usar theme 'clam' mejora la capacidad de customizar colores en ttk
+        try:
+            self.style.theme_use('clam')
+        except Exception:
+            pass
+
+        self.style.configure("TFrame", background=bg_main)
+        self.style.configure("TLabel", background=bg_main, foreground=text_primary)
+        self.style.configure("Title.TLabel", font=("Segoe UI", 20, "bold"), background=bg_main, foreground=text_primary)
+        self.style.configure("HeaderTitle.TLabel", font=("Segoe UI", 18, "bold"), background=bg_main, foreground=text_primary)
+        self.style.configure("Sub.TLabel", font=("Segoe UI", 11), foreground=text_muted, background=bg_main)
+        self.style.configure("Search.TButton", font=("Segoe UI", 11, "bold"), foreground="#FFFFFF", background=accent)
+        self.style.configure("Card.TFrame", background=card_bg, relief="flat", borderwidth=1)
+        self.style.map("Search.TButton",
+                       background=[('active', '#2558d9'), ('!disabled', accent)])
+        self.style.configure("CardTitle.TLabel", font=("Segoe UI", 11, "bold"), background=card_bg, foreground=text_primary)
+        self.style.configure("Muted.TLabel", foreground=text_muted, background=card_bg, font=("Segoe UI", 9))
+        self.style.configure("Category.TLabel", foreground=accent, font=("Segoe UI", 10, "bold"))
 
         # header
         self.header = ttk.Frame(self.root, padding=20)
         self.header.pack(fill="x")
         ttk.Label(self.header, text="Buscar archivo", style="Title.TLabel").pack(anchor="w")
         ttk.Label(self.header, text="Buscar archivo por título o contenido", style="Sub.TLabel").pack(anchor="w")
-        self.upload_button = tk.Button(self.header, text="⬆️Subir archivo", bg="#0A84FF", fg="white", font=("Segoe UI", 10, "bold"), relief="flat", padx=10, pady=5)
+        # upload button usa tk.Button para control de color directo
+        self.upload_button = tk.Button(self.header, text="⬆️Subir archivo", bg=accent, fg="white", font=("Segoe UI", 10, "bold"), relief="flat", padx=10, pady=5)
         self.upload_button.bind("<Button-1>", self.on_upload_click)
         self.upload_button.pack(anchor="e")
 
@@ -55,8 +85,10 @@ class UI:
         ttk.Radiobutton(search_row, text="Título", variable=self.filter_var, value="title").pack(side="left", padx=15)
         ttk.Radiobutton(search_row, text="Contenido", variable=self.filter_var, value="content").pack(side="left")
 
-        # bind Enter para buscar (ejecuta búsqueda final)
-        self.search_entry.bind('<Return>', lambda e: self.perform_search())
+        # bind Enter para buscar (ejecuta búsqueda final) y navegación de sugerencias
+        self.search_entry.bind('<Return>', self.on_entry_return)
+        self.search_entry.bind('<Down>', self.on_entry_down)
+        self.search_entry.bind('<Up>', self.on_entry_up)
 
         
         self.suggestions_window = tk.Toplevel(self.root)
@@ -64,7 +96,7 @@ class UI:
         self.suggestions_window.attributes("-topmost", True)
         self.suggestions_window.withdraw()
 
-        self.suggestions_listbox = tk.Listbox(self.suggestions_window, height=6, font=("Segoe UI", 10))
+        self.suggestions_listbox = tk.Listbox(self.suggestions_window, height=6, font=("Segoe UI", 10), bg=card_bg, fg=text_primary, bd=0, highlightthickness=0)
         self.suggestions_listbox.pack(side="left", fill="both", expand=True)
 
         suggestions_scroll = ttk.Scrollbar(self.suggestions_window, orient="vertical", command=self.suggestions_listbox.yview)
@@ -77,6 +109,11 @@ class UI:
         self.search_entry.bind('<Button-1>', lambda e: self.show_suggestions())
         self.suggestions_listbox.bind('<Double-Button-1>', self.on_suggestion_select)
         self.suggestions_listbox.bind('<ButtonRelease-1>', self.on_suggestion_click)
+        # teclado: aceptar con Enter y navegar con Up/Down
+        self.suggestions_listbox.bind('<Return>', self.on_listbox_return)
+        self.suggestions_listbox.bind('<Double-Return>', self.on_listbox_return)
+        self.suggestions_listbox.bind('<Down>', self.on_listbox_down)
+        self.suggestions_listbox.bind('<Up>', self.on_listbox_up)
 
         # almacenamiento de items: lista de tuplas (kind, value)
         self.suggestions_items = []
@@ -92,12 +129,12 @@ class UI:
 
         # ---- SCROLL AREA ----
         # Título de la sección donde se muestran los documentos/resultados
-        ttk.Label(self.root, text="Archivos", style="Title.TLabel").pack(fill="x", padx=20, anchor="w")
+        ttk.Label(self.root, text="Archivos", style="HeaderTitle.TLabel").pack(fill="x", padx=20, anchor="w")
 
         container = ttk.Frame(self.root)
         container.pack(fill="both", expand=True, padx=20, pady=10)
 
-        canvas = tk.Canvas(container, bg="#F5F5F5", highlightthickness=0)
+        canvas = tk.Canvas(container, bg=bg_main, highlightthickness=0)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
         self.cards_frame = ttk.Frame(canvas)
 
@@ -219,30 +256,38 @@ class UI:
 
         mode = self.filter_var.get()
         filenames = []
+        freq_map = {}
 
+        # si hay búsqueda por contenido, usar buscar_palabra (devuelve ordenado por freq)
         if mode in ("all", "content"):
-            # buscar por contenido usando buscar_palabra (normaliza internamente)
             resultados = buscar_palabra(query)
-            filenames.extend([r[0] for r in resultados])
+            for fname, freq in resultados:
+                if fname not in filenames:
+                    filenames.append(fname)
+                freq_map[fname] = freq
 
+        # títulos (coincidencias por prefijo en trie)
         if mode in ("all", "title"):
             pref = normalizar(query)
             titulos = trie_titulos.autocompletar(pref)
             for fname in matrizDocumentos.keys():
                 if os.path.splitext(fname)[0].lower() in (t.lower() for t in titulos):
-                    filenames.append(fname)
+                    if fname not in filenames:
+                        filenames.append(fname)
+                    # si no tiene frecuencia de contenido, dejar 0
+                    freq_map.setdefault(fname, 0)
 
-        # eliminar duplicados manteniendo orden
-        seen = set()
-        unique_filenames = []
-        for f in filenames:
-            if f not in seen:
-                seen.add(f)
-                unique_filenames.append(f)
+        # eliminar duplicados ya controlado, ahora ordenar por frecuencia si hubo búsqueda por contenido
+        if any(freq_map.values()):
+            # ordenar filenames por freq desc, manteniendo los que no tienen freq al final
+            filenames.sort(key=lambda f: freq_map.get(f, 0), reverse=True)
 
-        # mapear a objetos UIFile en self.files
-        filtered_ui_files = [ui_file for ui_file in self.files if ui_file.name in unique_filenames]
-        self.update_cards(filtered_ui_files)
+        # mapear a objetos UIFile en self.files preservando el orden de filenames
+        name_to_ui = {ui_file.name: ui_file for ui_file in self.files}
+        filtered_ui_files = [name_to_ui[f] for f in filenames if f in name_to_ui]
+
+        # pasar el mapa de frecuencias a update_cards para mostrar ocurrencias
+        self.update_cards(filtered_ui_files, freq_map=freq_map)
 
 
     def on_upload_click(self, event=None):
@@ -330,22 +375,139 @@ class UI:
         except Exception:
             return
 
+
+        self.accept_suggestion_index(idx)
+
+    def accept_suggestion_index(self, idx):
         if idx < 0 or idx >= len(self.suggestions_items):
             return
-
-        type, val = self.suggestions_items[idx]
+        kind, val = self.suggestions_items[idx]
 
         # poner valor en el entry
         self.search_entry.delete(0, tk.END)
-        if type == 'title':
+        if kind == 'title':
             base = os.path.splitext(val)[0]
             self.search_entry.insert(0, base)
         else:
             self.search_entry.insert(0, val)
 
         # aplicar filtro a las tarjetas
-        self.apply_filter(type, val)
+        self.apply_filter(kind, val)
         self.hide_suggestions()
+
+    def on_entry_return(self, event=None):
+        # Si hay sugerencias visibles, aceptar la selección (o la primera)
+        try:
+            mapped = self.suggestions_window.winfo_ismapped()
+        except Exception:
+            mapped = False
+
+        if mapped and self.suggestions_items:
+            sel = self.suggestions_listbox.curselection()
+            if sel:
+                idx = sel[0]
+            else:
+                idx = 0
+            self.accept_suggestion_index(idx)
+            return "break"
+
+        # en caso contrario, ejecutar búsqueda normal
+        return self.perform_search()
+
+    def on_entry_down(self, event=None):
+        try:
+            mapped = self.suggestions_window.winfo_ismapped()
+        except Exception:
+            mapped = False
+
+        if not mapped:
+            # mostrar y seleccionar el primero
+            self.on_search()
+            try:
+                self.suggestions_listbox.selection_set(0)
+                self.suggestions_listbox.activate(0)
+                self.suggestions_listbox.focus_set()
+            except Exception:
+                pass
+            return "break"
+
+        # si ya visible, mover selección hacia abajo
+        try:
+            cur = self.suggestions_listbox.curselection()
+            if not cur:
+                idx = 0
+            else:
+                idx = min(len(self.suggestions_items) - 1, cur[0] + 1)
+            self.suggestions_listbox.selection_clear(0, tk.END)
+            self.suggestions_listbox.selection_set(idx)
+            self.suggestions_listbox.activate(idx)
+            self.suggestions_listbox.see(idx)
+            self.suggestions_listbox.focus_set()
+        except Exception:
+            pass
+        return "break"
+
+    def on_entry_up(self, event=None):
+        try:
+            mapped = self.suggestions_window.winfo_ismapped()
+        except Exception:
+            mapped = False
+
+        if not mapped:
+            return
+
+        try:
+            cur = self.suggestions_listbox.curselection()
+            if not cur:
+                idx = max(0, len(self.suggestions_items) - 1)
+            else:
+                idx = max(0, cur[0] - 1)
+            self.suggestions_listbox.selection_clear(0, tk.END)
+            self.suggestions_listbox.selection_set(idx)
+            self.suggestions_listbox.activate(idx)
+            self.suggestions_listbox.see(idx)
+            self.suggestions_listbox.focus_set()
+        except Exception:
+            pass
+        return "break"
+
+    # listbox keyboard handlers
+    def on_listbox_return(self, event=None):
+        sel = self.suggestions_listbox.curselection()
+        if sel:
+            idx = sel[0]
+            self.accept_suggestion_index(idx)
+        return "break"
+
+    def on_listbox_down(self, event=None):
+        try:
+            cur = self.suggestions_listbox.curselection()
+            if not cur:
+                idx = 0
+            else:
+                idx = min(len(self.suggestions_items) - 1, cur[0] + 1)
+            self.suggestions_listbox.selection_clear(0, tk.END)
+            self.suggestions_listbox.selection_set(idx)
+            self.suggestions_listbox.activate(idx)
+            self.suggestions_listbox.see(idx)
+        except Exception:
+            pass
+        return "break"
+
+    def on_listbox_up(self, event=None):
+        try:
+            cur = self.suggestions_listbox.curselection()
+            if not cur:
+                idx = max(0, len(self.suggestions_items) - 1)
+            else:
+                idx = max(0, cur[0] - 1)
+            self.suggestions_listbox.selection_clear(0, tk.END)
+            self.suggestions_listbox.selection_set(idx)
+            self.suggestions_listbox.activate(idx)
+            self.suggestions_listbox.see(idx)
+        except Exception:
+            pass
+        return "break"
 
     def create_ui_file(self, file_path):
         import os
@@ -362,33 +524,43 @@ class UI:
         for widget in self.cards_frame.winfo_children():
             widget.destroy()
 
-    def update_cards(self, files_list=None):
-        """Actualiza las tarjetas usando `files_list` si se proporciona, sino `self.files`."""
+    def update_cards(self, files_list=None, freq_map=None):
+        """Actualiza las tarjetas usando `files_list` si se proporciona, sino `self.files`.
+        `freq_map` es opcional y contiene {filename: frecuencia} para mostrar ocurrencias."""
         self.clean_cards()
         col = 0
         row = 0
 
         list_to_iterate = files_list if files_list is not None else self.files
 
+        # si no hay archivos a mostrar, indicar al usuario
+        if not list_to_iterate:
+            empty = ttk.Label(self.cards_frame, text="No hay documentos para mostrar.", style="Sub.TLabel")
+            empty.grid(row=0, column=0, padx=10, pady=10)
+            return
+
         for ui_file in list_to_iterate:
-            card = ttk.Frame(self.cards_frame, padding=15, style="Card.TFrame")
+            card = ttk.Frame(self.cards_frame, padding=12, style="Card.TFrame")
             card.grid(row=row, column=col, padx=10, pady=10, sticky="n")
-            card.bind("<Button-1>", lambda e, path=ui_file.path: os.startfile(path))
+            # click sencillo abre archivo (Windows)
+            try:
+                card.bind("<Double-Button-1>", lambda e, path=ui_file.path: os.startfile(path))
+            except Exception:
+                pass
 
             # --- Header con ícono y nombre ---
             header = ttk.Frame(card)
             header.pack(anchor="w")
 
-            ttk.Label(header, text="📄", font=("Segoe UI", 20)).pack(side="left", padx=(0, 8))
-            ttk.Label(header, text=ui_file.name, style="Title.TLabel").pack(side="left")
+            ttk.Label(header, text="📄", font=("Segoe UI", 20), background=self.card_bg).pack(side="left", padx=(0, 8))
+            ttk.Label(header, text=ui_file.name, style="CardTitle.TLabel").pack(side="left")
 
-            # --- Ruta del archivo ---
+            # --- Ruta del archivo (muted, truncada visualmente) ---
             ttk.Label(
                 card,
                 text=ui_file.path,
-                font=("Segoe UI", 9),
-                foreground="#555",
-                wraplength=250
+                style="Muted.TLabel",
+                wraplength=300
             ).pack(anchor="w", pady=5)
 
             ttk.Separator(card).pack(fill="x", pady=5)
@@ -397,14 +569,34 @@ class UI:
             ttk.Label(
                 card,
                 text=f"Tamaño: {round(ui_file.size / 1024, 2)} KB",
-                font=("Segoe UI", 10)
+                font=("Segoe UI", 10),
+                background=self.card_bg
             ).pack(anchor="w")
 
-            # --- Fecha ---
+            # --- Fecha y ocurrencias ---
             bottom = ttk.Frame(card)
             bottom.pack(anchor="w", pady=(10, 0))
 
-            ttk.Label(bottom, text=f"📅 {ui_file.date_modified}").pack(side="left")
+            ttk.Label(bottom, text=f"📅 {ui_file.date_modified}", style="Muted.TLabel").pack(side="left")
+
+            # mostrar ocurrencias si existe en freq_map
+            try:
+                oc = None
+                if freq_map and ui_file.name in freq_map and freq_map[ui_file.name] > 0:
+                    oc = freq_map[ui_file.name]
+
+                if oc is not None:
+                    ttk.Label(bottom, text=f"   🔢 {oc} ocurrencias", style="Muted.TLabel").pack(side="left", padx=(8,0))
+            except Exception:
+                pass
+
+            # doble-click abre el archivo (Windows) — usa helper que valida existencia
+            try:
+                card.bind('<Double-Button-1>', lambda e, p=ui_file.path: self.open_file(p))
+                for child in card.winfo_children():
+                    child.bind('<Double-Button-1>', lambda e, p=ui_file.path: self.open_file(p))
+            except Exception:
+                pass
 
             # manejo de columnas
             col += 1
@@ -416,6 +608,24 @@ class UI:
 
     def run(self):
         self.root.mainloop()
+
+    def open_file(self, path):
+        """Intentar abrir el archivo en Windows con validación y mensajes de error."""
+        if not path:
+            messagebox.showerror("Archivo inválido", "La ruta del archivo está vacía.")
+            return
+
+        if not os.path.exists(path):
+            messagebox.showerror("No encontrado", f"No se encontró el archivo:\n{path}")
+            return
+
+        try:
+            # Windows
+            if sys.platform.startswith('win'):
+                os.startfile(path)
+                return
+        except Exception as e:
+            messagebox.showerror("Error al abrir", f"No se pudo abrir el archivo:\n{e}")
 
     def apply_filter(self, kind, value):
         """Filtra `self.files` según la selección: 'title' corresponde a nombre de archivo,
@@ -434,8 +644,8 @@ class UI:
                 fname = ui_file.name
                 if fname in matrizDocumentos:
                     try:
-                        # Trae las que tengan esa palabra en contenido
-                        if matrizDocumentos[fname][value]:
+                        # Trae las que tengan esa palabra en contenido (frecuencia > 0)
+                        if matrizDocumentos[fname][value] > 0:
                             filtered.append(ui_file)
                     except Exception:
                         pass
